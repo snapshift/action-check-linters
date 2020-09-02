@@ -1,0 +1,12 @@
+{
+    "linters": [
+        {
+            "type": "tsc",
+            "configFilePath": "./tsconfig.json"
+        },
+        {
+            "type": "eslint",
+            "configFilePath": "./.eslintrc.json"
+        }
+    ]
+}
