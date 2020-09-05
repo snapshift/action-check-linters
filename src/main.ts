@@ -9,17 +9,30 @@ import { getAndValidateArgs } from './getAndValidateArgs'
 import { parseTsConfigFile } from './parseTsConfigFile'
 import { exec } from '@actions/exec'
 import { runTsc } from './runTsc'
-import { parseOutputTsc } from './parseOutputTsc'
+import { parseOutputTsc } from './parseOutput'
 import { getBodyComment } from './getBodyComment'
 import { checkoutAndInstallBaseBranch } from './checkoutAndInstallBaseBranch'
 import { filterErrors } from './filterErrors'
 import { compareErrors } from './compareErrors'
+import { runLinter } from './runLinter'
 
 interface PullRequest {
   number: number;
   html_url?: string
   body?: string
   changed_files: number
+}
+
+export enum LinterType {
+    TSC = 'tsc',
+    ESLINT = 'eslint'
+}
+
+interface ConfigFile {
+    linters : {
+        type: LinterType,
+        configFilePath:string
+    }[]
 }
 
 async function run(): Promise<void> {
@@ -68,8 +81,18 @@ async function run(): Promise<void> {
 
     info(`[current branch] compilerOptions ${JSON.stringify(compilerOptions)}`)
 
-    const config = parseTsConfigFile(tsconfigPath)
-    info(`[current branch] config ${JSON.stringify(config)}`)
+    //const config = parseTsConfigFile(tsconfigPath)
+    //info(`[current branch] config ${JSON.stringify(config)}`)
+
+    const config =  JSON.parse((await fs.promises.readFile(args.configPath)).toString()) as ConfigFile
+
+    for (const linterConfig of config.linters) {
+        await runLinter({
+            type:linterConfig.type,
+            workingDir,
+            configPath : linterConfig.configFilePath,
+        })
+    }
 
     startGroup(`[current branch] compile ts files`)
 

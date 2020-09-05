@@ -1,4 +1,4 @@
-import { ErrorParsed } from "./parseOutputTsc"
+import { ErrorParsed } from "./parseOutput"
 
 export function compareErrors(errorsBefore: ErrorParsed[], errorsAfter: ErrorParsed[]): ErrorParsed[] {
 

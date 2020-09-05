@@ -1,9 +1,9 @@
-import { ErrorParsed } from "./parseOutputTsc"
+import { ErrorParsed } from "./parseOutput"
 
-export function filterErrors(errorsTsc: ErrorParsed[], fileNamesString: string): ErrorParsed[] {
+export function filterErrors(errorsParsed: ErrorParsed[], fileNamesString: string): ErrorParsed[] {
 
     const fileNames = fileNamesString.split(" ")
-    return errorsTsc.filter(tsErr => {
-        return fileNames.includes(tsErr.file)
+    return errorsParsed.filter(err => {
+        return fileNames.includes(err.file)
     })
 }
