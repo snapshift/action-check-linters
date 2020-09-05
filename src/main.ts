@@ -9,7 +9,7 @@ import { getAndValidateArgs } from './getAndValidateArgs'
 import { parseTsConfigFile } from './parseTsConfigFile'
 import { exec } from '@actions/exec'
 import { runTsc } from './runTsc'
-import { parseOutputTsc } from './parseOutput'
+import { parseOutput } from './parseOutput'
 import { getBodyComment } from './getBodyComment'
 import { checkoutAndInstallBaseBranch } from './checkoutAndInstallBaseBranch'
 import { filterErrors } from './filterErrors'
@@ -28,11 +28,13 @@ export enum LinterType {
     ESLINT = 'eslint'
 }
 
-interface ConfigFile {
-    linters : {
-        type: LinterType,
+interface ConfigFileLinter {
+        type: LinterType
         configFilePath:string
-    }[]
+}
+
+export interface ConfigFile {
+    linters : ConfigFileLinter[]
 }
 
 async function run(): Promise<void> {
@@ -87,23 +89,21 @@ async function run(): Promise<void> {
     const config =  JSON.parse((await fs.promises.readFile(args.configPath)).toString()) as ConfigFile
 
     for (const linterConfig of config.linters) {
-        await runLinter({
+
+        startGroup(`[current branch] run ${linterConfig.type}`)
+
+        const { output }= await runLinter({
             type:linterConfig.type,
             workingDir,
             configPath : linterConfig.configFilePath,
         })
+
+        const errorsProjectCurrent = parseOutput(linterConfig.type, output)
+
+        endGroup()
+
     }
 
-    startGroup(`[current branch] compile ts files`)
-
-    const { output: tscOutputCurrent } = await runTsc({
-      workingDir,
-      tsconfigPath
-    })
-
-    const errorsProjectCurrent = parseOutputTsc(tscOutputCurrent)
-
-    endGroup()
 
     startGroup(`[base branch] compile ts files`)
 
@@ -118,7 +118,7 @@ async function run(): Promise<void> {
       tsconfigPath
     })
 
-    const errorsProjectBase = parseOutputTsc(tscOutputBase)
+    const errorsProjectBase = parseOutput(tscOutputBase)
 
     endGroup()
 
