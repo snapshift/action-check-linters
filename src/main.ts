@@ -9,7 +9,7 @@ import { getAndValidateArgs } from './getAndValidateArgs'
 import { parseTsConfigFile } from './parseTsConfigFile'
 import { exec } from '@actions/exec'
 import { runTsc } from './runTsc'
-import { parseOutput } from './parseOutput'
+import { parseOutput, ErrorParsed } from './parseOutput'
 import { getBodyComment } from './getBodyComment'
 import { checkoutAndInstallBaseBranch } from './checkoutAndInstallBaseBranch'
 import { filterErrors } from './filterErrors'
@@ -17,10 +17,10 @@ import { compareErrors } from './compareErrors'
 import { runLinter } from './runLinter'
 
 interface PullRequest {
-  number: number;
-  html_url?: string
-  body?: string
-  changed_files: number
+    number: number
+    html_url?: string
+    body?: string
+    changed_files: number
 }
 
 export enum LinterType {
@@ -28,168 +28,187 @@ export enum LinterType {
     ESLINT = 'eslint'
 }
 
-interface ConfigFileLinter {
-        type: LinterType
-        configFilePath:string
+export interface ConfigFileLinter {
+    type: LinterType
+    configFilePath: string
 }
 
 export interface ConfigFile {
-    linters : ConfigFileLinter[]
+    linters: ConfigFileLinter[]
+}
+
+export interface LinterResult {
+    type: LinterType,
+    errors: ErrorParsed[]
 }
 
 async function run(): Promise<void> {
-  try {
-    const args = getAndValidateArgs()
-    const workingDir = path.join(process.cwd(), args.directory)
-    info(`working directory: ${workingDir}`)
+    try {
+        const args = getAndValidateArgs()
+        const workingDir = path.join(process.cwd(), args.directory)
+        info(`working directory: ${workingDir}`)
 
-    const tsconfigPath = path.join(workingDir, args.configPath)
-    info(`tsconfigPath: ${tsconfigPath}`)
-    if (!fs.existsSync(tsconfigPath)) {
-      throw new Error(`could not find tsconfig.json at: ${tsconfigPath}`)
-    }
+        const tsconfigPath = path.join(workingDir, args.configPath)
+        info(`tsconfigPath: ${tsconfigPath}`)
+        if (!fs.existsSync(tsconfigPath)) {
+            throw new Error(`could not find tsconfig.json at: ${tsconfigPath}`)
+        }
 
-    const octokit = getOctokit(args.repoToken)
+        const octokit = getOctokit(args.repoToken)
 
-    const pr = github.context.payload.pull_request
+        const pr = github.context.payload.pull_request
 
-    if (!pr) {
-      throw Error('Could not retrieve PR information. Only "pull_request" triggered workflows are currently supported.')
-    }
+        if (!pr) {
+            throw Error('Could not retrieve PR information. Only "pull_request" triggered workflows are currently supported.')
+        }
 
-    const execOptions = {
-      ...(args.directory ? { cwd: args.directory } : {})
-    }
+        const execOptions = {
+            ...(args.directory ? { cwd: args.directory } : {})
+        }
 
-    const yarnLock = fs.existsSync(path.resolve(workingDir, 'yarn.lock'))
-    const packageLock = fs.existsSync(path.resolve(workingDir, 'package-lock.json'))
+        const yarnLock = fs.existsSync(path.resolve(workingDir, 'yarn.lock'))
+        const packageLock = fs.existsSync(path.resolve(workingDir, 'package-lock.json'))
 
-    let installScript = `npm install`
-    if (yarnLock) {
-      installScript = `yarn --frozen-lockfile`
-    } else if (packageLock) {
-      installScript = `npm ci`
-    }
+        let installScript = `npm install`
+        if (yarnLock) {
+            installScript = `yarn --frozen-lockfile`
+        } else if (packageLock) {
+            installScript = `npm ci`
+        }
 
-    startGroup(`[current branch] Install Dependencies`)
-    info(`Installing using ${installScript}`)
-    await exec(installScript, [], execOptions)
-    endGroup()
+        startGroup(`[current branch] Install Dependencies`)
+        info(`Installing using ${installScript}`)
+        await exec(installScript, [], execOptions)
+        endGroup()
 
-    const compilerOptions = {
-      ...parseTsConfigFileToCompilerOptions(tsconfigPath),
-      noEmit: true
-    }
+        const compilerOptions = {
+            ...parseTsConfigFileToCompilerOptions(tsconfigPath),
+            noEmit: true
+        }
 
-    info(`[current branch] compilerOptions ${JSON.stringify(compilerOptions)}`)
+        info(`[current branch] compilerOptions ${JSON.stringify(compilerOptions)}`)
 
-    //const config = parseTsConfigFile(tsconfigPath)
-    //info(`[current branch] config ${JSON.stringify(config)}`)
+        //const config = parseTsConfigFile(tsconfigPath)
+        //info(`[current branch] config ${JSON.stringify(config)}`)
 
-    const config =  JSON.parse((await fs.promises.readFile(args.configPath)).toString()) as ConfigFile
+        const config = JSON.parse((await fs.promises.readFile(args.configPath)).toString()) as ConfigFile
 
-    for (const linterConfig of config.linters) {
+        const errorsCurrent = []
+        for (const linterConfig of config.linters) {
 
-        startGroup(`[current branch] run ${linterConfig.type}`)
+            startGroup(`[current branch] run ${linterConfig.type}`)
 
-        const { output }= await runLinter({
-            type:linterConfig.type,
-            workingDir,
-            configPath : linterConfig.configFilePath,
+            const { output } = await runLinter({
+                workingDir,
+                linterConfig,
+            })
+
+            errorsCurrent.push({
+                type: linterConfig.type,
+                errors: parseOutput(linterConfig.type, output)
+            })
+
+            endGroup()
+
+        }
+
+        startGroup(`[base branch] compile ts files`)
+
+        await checkoutAndInstallBaseBranch({
+            installScript,
+            payload: context.payload,
+            execOptions
         })
+        let errorsBase = []
+        for (const linterConfig of config.linters) {
 
-        const errorsProjectCurrent = parseOutput(linterConfig.type, output)
+            startGroup(`[current branch] run ${linterConfig.type}`)
+
+            const { output } = await runLinter({
+                type: linterConfig.type,
+                workingDir,
+                configPath: linterConfig.configFilePath,
+            })
+
+            errorsBase.push({
+                type: linterConfig.type,
+                errors: parseOutput(linterConfig.type, output)
+            })
+
+            endGroup()
+
+        }
 
         endGroup()
 
+        startGroup(`Creating comment`)
+
+        const commentInfo = {
+            ...context.repo,
+            issue_number: context.payload.pull_request!.number
+        }
+
+        const errorsInPr = filterErrors(errorsProjectCurrent, args.filesChanged)
+
+        const newErrorsInPr = compareErrors(errorsProjectBase, errorsProjectCurrent)
+
+        const comment = {
+            ...commentInfo,
+            body: getBodyComment({
+                errorsInProjectBefore: errorsProjectBase,
+                errorsInProjectAfter: errorsProjectCurrent,
+                errorsInPr,
+                newErrorsInPr
+            })
+        }
+
+        try {
+            await octokit.issues.createComment(comment)
+        } catch (e) {
+            info(`Error creating comment: ${e.message}`)
+            info(`Submitting a PR review comment instead...`)
+            try {
+                const issue = context.issue || pr
+                await octokit.pulls.createReview({
+                    owner: issue.owner,
+                    repo: issue.repo,
+                    pull_number: issue.number,
+                    event: 'COMMENT',
+                    body: comment.body
+                })
+            } catch (errCreateComment) {
+                info(`Error creating PR review ${errCreateComment.message}`)
+            }
+        }
+        endGroup()
+
+        const isPrOk = !errorsInPr.length
+
+        if (args.useCheck) {
+            const finish = await createCheck(octokit, context, "Check ts errors")
+
+            if (isPrOk) {
+                await finish({
+                    conclusion: 'success',
+                    output: {
+                        title: `No tsc error in the PR files.`,
+                        summary: `No tsc error in the PR files.`
+                    }
+                })
+            } else {
+                await finish({
+                    conclusion: 'failure',
+                    output: {
+                        title: `${errorsInPr.length} tsc error in the PR files.`,
+                        summary: `${errorsInPr.length} tsc error in the PR files.`
+                    }
+                })
+            }
+        }
+
+    } catch (errorRun) {
+        setFailed(errorRun.message)
     }
-
-
-    startGroup(`[base branch] compile ts files`)
-
-    await checkoutAndInstallBaseBranch({
-      installScript,
-      payload: context.payload,
-      execOptions
-    })
-
-    const { output: tscOutputBase } = await runTsc({
-      workingDir,
-      tsconfigPath
-    })
-
-    const errorsProjectBase = parseOutput(tscOutputBase)
-
-    endGroup()
-
-    startGroup(`Creating comment`)
-
-    const commentInfo = {
-      ...context.repo,
-      issue_number: context.payload.pull_request!.number
-    }
-
-    const errorsInPr = filterErrors(errorsProjectCurrent, args.filesChanged)
-
-    const newErrorsInPr = compareErrors(errorsProjectBase, errorsProjectCurrent)
-
-    const comment = {
-      ...commentInfo,
-      body: getBodyComment({
-        errorsInProjectBefore: errorsProjectBase,
-        errorsInProjectAfter: errorsProjectCurrent,
-        errorsInPr,
-        newErrorsInPr
-      })
-    }
-
-    try {
-      await octokit.issues.createComment(comment)
-    } catch (e) {
-      info(`Error creating comment: ${e.message}`)
-      info(`Submitting a PR review comment instead...`)
-      try {
-        const issue = context.issue || pr
-        await octokit.pulls.createReview({
-          owner: issue.owner,
-          repo: issue.repo,
-          pull_number: issue.number,
-          event: 'COMMENT',
-          body: comment.body
-        })
-      } catch (errCreateComment) {
-        info(`Error creating PR review ${errCreateComment.message}`)
-      }
-    }
-    endGroup()
-
-    const isPrOk = !errorsInPr.length
-
-    if (args.useCheck) {
-      const finish = await createCheck(octokit, context, "Check ts errors")
-
-      if (isPrOk) {
-        await finish({
-          conclusion: 'success',
-          output: {
-            title: `No tsc error in the PR files.`,
-            summary: `No tsc error in the PR files.`
-          }
-        })
-      } else {
-        await finish({
-          conclusion: 'failure',
-          output: {
-            title: `${errorsInPr.length} tsc error in the PR files.`,
-            summary: `${errorsInPr.length} tsc error in the PR files.`
-          }
-        })
-      }
-    }
-
-  } catch (errorRun) {
-    setFailed(errorRun.message)
-  }
 }
 
 run()

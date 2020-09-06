@@ -1,6 +1,6 @@
 import { LinterType } from "./main"
 
-export function parseOutput(type:LinterType ,output: string): ErrorParsed[] {
+export function parseOutput(type: LinterType, output: string): ErrorParsed[] {
     const matcher = matchers.find(item => item.type === type)
     const lines = output.split('\n').map(line => line.trim()).filter(line => !!line)
     const errorsParsed = lines.map(line => parseErrorLine(line, matcher!))
@@ -8,7 +8,7 @@ export function parseOutput(type:LinterType ,output: string): ErrorParsed[] {
 }
 
 interface Matcher {
-    type : LinterType
+    type: LinterType
     regexp: string
     parts: {
         name: string
@@ -26,7 +26,7 @@ export interface ErrorParsed {
 }
 
 export const matchers: Matcher[] = [{
-    type : LinterType.TSC,
+    type: LinterType.TSC,
     regexp: "^([^\\s].*)[\\(:](\\d+)[,:](\\d+)(?:\\):\\s+|\\s+-\\s+)(error|warning|info)\\s+TS(\\d+)\\s*:\\s*(.*)$",
     parts: [{
         name: "file",
@@ -48,7 +48,7 @@ export const matchers: Matcher[] = [{
         position: 6
     }]
 }, {
-    type:LinterType.ESLINT
+    type: LinterType.ESLINT
 }]
 
 export function parseErrorLine(str: string, matcher: Matcher): ErrorParsed {
