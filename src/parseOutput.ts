@@ -1,11 +1,15 @@
-export function parseOutputTsc(output: string): ErrorParsed[] {
+import { LinterType } from "./main"
+
+export function parseOutput(type: LinterType, output: string): ErrorParsed[] {
+    const matcher = matchers.find(item => item.type === type)
     const lines = output.split('\n').map(line => line.trim()).filter(line => !!line)
-    const errorsParsed = lines.map(line => parseTscErrorLine(line, tscMatcher))
+    const errorsParsed = lines.map(line => parseErrorLine(line, matcher!))
     return errorsParsed
 }
 
 interface Matcher {
-    regexp: string,
+    type: LinterType
+    regexp: string
     parts: {
         name: string
         position: number
@@ -21,7 +25,8 @@ export interface ErrorParsed {
     message: string
 }
 
-export const tscMatcher: Matcher = {
+export const matchers: Matcher[] = [{
+    type: LinterType.TSC,
     regexp: "^([^\\s].*)[\\(:](\\d+)[,:](\\d+)(?:\\):\\s+|\\s+-\\s+)(error|warning|info)\\s+TS(\\d+)\\s*:\\s*(.*)$",
     parts: [{
         name: "file",
@@ -42,9 +47,11 @@ export const tscMatcher: Matcher = {
         name: "message",
         position: 6
     }]
-}
+}, {
+    type: LinterType.ESLINT
+}]
 
-export function parseTscErrorLine(str: string, matcher: Matcher): ErrorParsed {
+export function parseErrorLine(str: string, matcher: Matcher): ErrorParsed {
 
     let arr: string[] = []
     try {

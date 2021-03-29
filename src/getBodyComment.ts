@@ -1,4 +1,4 @@
-import { ErrorParsed } from './parseOutputTsc'
+import { ErrorParsed } from './parseOutput'
 
 const BLANK_LINE = '  \n'
 interface Cfg {
